@@ -11,5 +11,6 @@ from agno.tools.yfinance import YFinanceTools
 
 ## Transport Agent
 transport_agent = Agent(
-    
+    ## Agent name
+    name="Transport Agent",
 )
