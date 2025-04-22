@@ -2,3 +2,4 @@ agno
 groq
 duckduckgo-search
 mcp
+openai
