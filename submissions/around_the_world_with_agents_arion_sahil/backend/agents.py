@@ -1,3 +1,5 @@
+import asyncio
+import os
 from textwrap import dedent
 
 from agno.agent import Agent, RunResponse
@@ -6,12 +8,13 @@ from agno.models.groq import Groq
 from agno.team.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.reasoning import ReasoningTools
-from agno.tools.mcp import MCPTools
+from agno.tools.mcp import MCPTools, MultiMCPTools
 # from agno.tools.yfinance import YFinanceTools
 
 from config import CONFIG
 
 GROQ_API_KEY = CONFIG["GROQ_API_KEY"]
+GOOGLE_MAPS_API_KEY = CONFIG["GOOGLE_MAPS_API_KEY"]
 
 ## Transport Agent
 transport_agent = Agent(
@@ -42,6 +45,26 @@ team_leader = Team(
     success_criteria = "The team has successfully completed the task.",
 )
 
+
+async def google_maps(query: str) -> str:
+    """ Fetches the Google Maps response for a given query. """
+    
+    async with MultiMCPTools(
+        [
+            # "npx -y @openbnb/mcp-server-airbnb --ignore-robots-txt",
+            "npx -y @modelcontextprotocol/server-google-maps",
+        ],
+        env = {"GOOGLE_MAPS_API_KEY": GOOGLE_MAPS_API_KEY},
+    ) as mcp_tools:
+        agent = Agent(
+            tools = [mcp_tools],
+            markdown = True,
+            show_tool_calls = True,
+        )
+        
+        await agent.aprint_response(query)
+
+
 def main(start_location: str, end_location: str):
     
     task = f"""
@@ -61,6 +84,10 @@ def main(start_location: str, end_location: str):
     
 
 if __name__ == "__main__":
-    start_location = "Ranchi"
-    end_location = "Gangtok"
-    main(start_location, end_location)
+    # start_location = "Ranchi"
+    # end_location = "Gangtok"
+    # main(start_location, end_location)
+    
+    asyncio.run(
+        google_maps("What are some cheap options to stay in Kolkata for 6 people for 3 days and 2 nights?"),
+    )
