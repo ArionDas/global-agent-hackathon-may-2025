@@ -1,0 +1,5 @@
+agno
+groq
+duckduckgo-search
+mcp
+mcp[cli]
