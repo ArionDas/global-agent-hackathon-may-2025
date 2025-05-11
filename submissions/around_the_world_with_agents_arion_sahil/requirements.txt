@@ -3,3 +3,4 @@ groq
 duckduckgo-search
 mcp
 mcp[cli]
+openai
