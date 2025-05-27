@@ -1,16 +1,19 @@
 import os
 import asyncio
 import sys
+import traceback
 from textwrap import dedent
 from dotenv import load_dotenv
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
+from agno.models.groq import Groq
 from agno.tools.mcp import MCPTools, MultiMCPTools
 from agno.utils.pprint import apprint_run_response
 
 load_dotenv()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY")
 
 def extract_text_from_response(response_stream):
@@ -21,7 +24,6 @@ def extract_text_from_response(response_stream):
         if hasattr(response_stream, 'content'):
             return response_stream.content
         elif hasattr(response_stream, 'messages') and response_stream.messages:
-            # Get the last message content
             last_message = response_stream.messages[-1]
             if hasattr(last_message, 'content'):
                 return last_message.content
@@ -32,7 +34,6 @@ def extract_text_from_response(response_stream):
         elif isinstance(response_stream, str):
             return response_stream
         else:
-            # Try to convert to string as fallback
             return str(response_stream)
     except Exception as e:
         print(f"Error extracting text from response: {e}")
@@ -41,12 +42,21 @@ def extract_text_from_response(response_stream):
 ## Transport Agent
 async def transport_mcp_agent(message: str, people: int = 1):
     response_text = None
+    agent = None
+    
     try:
-        async with MCPTools("npx -y @modelcontextprotocol/server-google-maps") as mcp_tools:
+        print("Initializing MCPTools for Transport Agent...")
+        mcp_tools = MCPTools("npx -y @modelcontextprotocol/server-google-maps")
+        print("MCPTools initialized for Transport Agent.")
+        
+        async with mcp_tools:
+            print("MCPTools context entered successfully")
             
-            print("MCPTools initializing for Transport Agent...")
+            if not OPENAI_API_KEY:
+                raise ValueError("OPENAI_API_KEY not found in environment variables")
+            
             agent = Agent(
-                model=OpenAIChat(id="gpt-4o-mini", api_key=OPENAI_API_KEY),
+                model=Groq(id="llama-3.3-70b-versatile", api_key=GROQ_API_KEY),
                 instructions=dedent(f"""\
                     You are a travel agent. Your task is to find the best transport options for {people} number of people.\
                     You will find the time and cost of traveling from one location to another - for each of the following modes:\
@@ -62,36 +72,37 @@ async def transport_mcp_agent(message: str, people: int = 1):
                 markdown=True,
             )
             print("Transport Agent initialized!")
+        
+            # Get response without streaming for easier text extraction
+            response_stream = await agent.arun(message, stream=False)
             
-            try:
-                # Get response without streaming for easier text extraction
-                response_stream = await agent.arun(message, stream=False)
-                
-                # Print the response for debugging
-                await apprint_run_response(response_stream, markdown=True)
-                
-                # Extract the actual text content
-                response_text = extract_text_from_response(response_stream)
-                
-            finally:
-                # Attempt to clean up agent if it has a proper close method
-                if hasattr(agent, 'close') and callable(agent.close):
-                    try:
-                        if asyncio.iscoroutinefunction(agent.close):
-                            await agent.close()
-                        else:
-                            agent.close()
-                        print("Agent closed")
-                    except Exception as e:
-                        print(f"Error closing agent: {e}")
+            # Print the response for debugging
+            await apprint_run_response(response_stream, markdown=True)
+            
+            # Extract the actual text content
+            response_text = extract_text_from_response(response_stream)
         
         print("MCPTools context exited.")
 
     except Exception as e:
-        print(f"Error occurred in transport_agent: {e}")
+        print(f"Error occurred in transport_mcp_agent: {e}")
+        print(f"Error type: {type(e)}")
+        traceback.print_exc()
+        response_text = None
+    
+    finally:
+        # Clean up agent if it exists
+        if agent and hasattr(agent, 'close') and callable(agent.close):
+            try:
+                if asyncio.iscoroutinefunction(agent.close):
+                    await agent.close()
+                else:
+                    agent.close()
+                print("Agent closed successfully")
+            except Exception as e:
+                print(f"Error closing agent: {e}")
     
     return response_text
-
 
 ## Hotel Booking Agent
 async def hotel_booking_mcp_agent(message: str, place: str, people: int = 1):
@@ -99,7 +110,6 @@ async def hotel_booking_mcp_agent(message: str, place: str, people: int = 1):
     try:
         async with MultiMCPTools(
             [
-                "npx -y @openbnb/mcp-server-airbnb --ignore-robotics-txt",
                 "npx -y @modelcontextprotocol/server-google-maps"
             ]
         ) as mcptools:
@@ -285,24 +295,3 @@ async def test_agents():
 
 if __name__ == "__main__":
     print("Starting main execution...")
-    
-    try:
-        # Test single agent
-        message = "Find me the price of traveling from Kolkata to Sikkim using car, train, flight. Please return in json format, no unnecessary text to be returned."
-        final_response = asyncio.run(transport_mcp_agent(message, people=2))
-        
-        if final_response:
-            print(f"Transport agent response type: {type(final_response)}")
-            print(f"Transport agent response: {final_response}")
-        else:
-            print("No response received from transport_agent or an error occurred.")
-            
-        # Uncomment to test all agents:
-        # print("\n" + "="*50)
-        # print("Testing all agents...")
-        # asyncio.run(test_agents())
-    
-    except Exception as e:
-        print(f"Error occurred in main execution block: {e}")
-    finally:
-        print("Main execution finished.")

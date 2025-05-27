@@ -1,7 +1,7 @@
 import asyncio
 import os
 from textwrap import dedent
-
+from dotenv import load_dotenv
 from agno.agent import Agent, RunResponse
 from agno.models.groq import Groq
 # from agno.models.openai import OpenAIChat
@@ -11,10 +11,12 @@ from agno.tools.reasoning import ReasoningTools
 from agno.tools.mcp import MCPTools, MultiMCPTools
 # from agno.tools.yfinance import YFinanceTools
 
-from config import CONFIG
+# from config import CONFIG
 
-GROQ_API_KEY = CONFIG["GROQ_API_KEY"]
-GOOGLE_MAPS_API_KEY = CONFIG["GOOGLE_MAPS_API_KEY"]
+load_dotenv()
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY")
 
 ## Transport Agent
 transport_agent = Agent(

@@ -1,5 +1,6 @@
 import os
 import asyncio
+import streamlit as st
 from dotenv import load_dotenv
 from agno.agent import Agent
 from agno.models.groq import Groq
@@ -8,8 +9,9 @@ from agents_sahil import transport_agent, location_agent, sightseeing_agent, hot
 from mcp_agents import transport_mcp_agent, hotel_booking_mcp_agent, sightseeing_mcp_agent, location_mcp_agent
 
 load_dotenv()
-
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY")
 
 def multi_agent_collaboration(start_location: str, tourist_destination: str, end_location: str, budget: float, total_days: int, number_of_people: int):
     
@@ -90,23 +92,55 @@ def multi_agent_collaboration(start_location: str, tourist_destination: str, end
         
 
 if __name__ == "__main__":
-    start_location = "Kolkata"
-    tourist_destination = "Delhi"
-    end_location = "Kolkata"
-    budget = 1000
-    total_days = 5
-    number_of_people = 2
     
-    prompt = multi_agent_collaboration(start_location, tourist_destination, end_location, budget, total_days, number_of_people)
+    st.set_page_config(layout='wide')
+    st.title("Around the World with Agents")
+    st.write("This is a collaborative multi-agent application for travel itinerary planning.")
     
-    llm_agent = Agent(model = Groq("llama-3.3-70b-versatile"), markdown = True)
+    with st.sidebar:
+        st.header("API Keys:")
+        openai_api_key = st.text_input("OpenAI API Key", type="password")
+        groq_api_key = st.text_input("Groq API Key", type="password")
+        google_maps_api_key = st.text_input("Google Maps API Key", type="password")
+        if not openai_api_key or not groq_api_key or not google_maps_api_key:
+            st.warning("Please enter all API keys to proceed.")
+            
+        os.environ["OPENAI_API_KEY"] = openai_api_key
+        os.environ["GROQ_API_KEY"] = groq_api_key
+        os.environ["GOOGLE_MAPS_API_KEY"] = google_maps_api_key
+        
+        st.header("Travel Details:")
+        start_location = st.text_input("Start Location")
+        tourist_destination = st.text_input("Tourist Destination")
+        end_location = st.text_input("End Location")
+        budget = st.number_input("Budget (in INR)")
+        total_days = st.number_input("Total Days")
+        number_of_people = st.number_input("Number of People")
+        if not start_location or not tourist_destination or not end_location or budget <= 0 or total_days <= 0 or number_of_people <= 0:
+            st.warning("Please fill all travel details to proceed.")
     
-    llm_agent.print_response(f"""Summarize the trip for the tourists. They are a group of {number_of_people} people traveling from {start_location} to {tourist_destination} and back to {end_location}.
-                             The trip is for {total_days} days. The budget is {budget}.
-                             
-                             Here is the trip plan:
-                             {prompt}.
-                             
-                             If you feel anything amiss, please feel free to add your own knowledge.""")
+    if st.button("Generate Itinerary"):
+        prompt = multi_agent_collaboration(start_location, tourist_destination, end_location, budget, total_days, number_of_people)
+    
+        llm_agent = Agent(model = Groq("llama-3.3-70b-versatile"), markdown = True)
+        
+        itinerary = llm_agent.print_response(f"""Summarize the trip for the tourists. They are a group of {number_of_people} people traveling from {start_location} to {tourist_destination} and back to {end_location}.
+                                The trip is for {total_days} days. The budget is {budget}.
+                                
+                                You have to provide a detailed itinerary for the trip.
+                                The itinerary should include the following:
+                                    - Day-wise breakdown of the trip
+                                    - Transport options with prices
+                                    - Hotel options with prices
+                                    - Sightseeing options with prices
+                                    - Any other relevant information that you think is important for the trip.
+                                
+                                Here is the trip plan:
+                                {prompt}.
+                                
+                                If you feel anything amiss, please feel free to add your own knowledge.""")
+        
+        st.subheader("Generated Itinerary:")
+        st.markdown(itinerary, unsafe_allow_html=True)
 
         

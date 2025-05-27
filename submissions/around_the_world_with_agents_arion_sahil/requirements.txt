@@ -5,3 +5,4 @@ mcp
 mcp[cli]
 openai
 google-genai
+streamlit
