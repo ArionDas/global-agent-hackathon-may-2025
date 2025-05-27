@@ -6,3 +6,5 @@ mcp[cli]
 openai
 google-genai
 streamlit
+llama-index
+llama-index-llms-groq

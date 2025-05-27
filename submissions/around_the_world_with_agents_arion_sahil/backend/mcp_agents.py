@@ -2,6 +2,7 @@ import os
 import asyncio
 import sys
 import traceback
+import platform
 from textwrap import dedent
 from dotenv import load_dotenv
 
@@ -15,6 +16,14 @@ load_dotenv()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY")
+
+# windows compatibility fix
+if platform.system() == "Windows":
+    # setting the event loop policy for Windows
+    if hasattr(asyncio, 'WindowsProactorEventLoopPolicy'):
+        asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+    elif hasattr(asyncio, 'WindowsSelectorEventLoopPolicy'):
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 def extract_text_from_response(response_stream):
     """
@@ -39,24 +48,63 @@ def extract_text_from_response(response_stream):
         print(f"Error extracting text from response: {e}")
         return None
 
-## Transport Agent
+def get_mcp_command():
+    """
+    Get the appropriate MCP command based on the platform
+    """
+    if platform.system() == "Windows":
+        # trying different approaches for Windows - credits Claude 4
+        commands_to_try = [
+            "npx.cmd -y @modelcontextprotocol/server-google-maps",
+            "npx -y @modelcontextprotocol/server-google-maps",
+            "node_modules/.bin/npx -y @modelcontextprotocol/server-google-maps"
+        ]
+    else:
+        commands_to_try = ["npx -y @modelcontextprotocol/server-google-maps"]
+    
+    return commands_to_try
+
+async def test_mcp_connection():
+    """
+    Test if MCP tools can be initialized properly
+    """
+    commands = get_mcp_command()
+    for cmd in commands:
+        try:
+            print(f"Testing MCP command: {cmd}")
+            mcp_tools = MCPTools(cmd)
+            async with mcp_tools:
+                print(f"Successfully connected with command: {cmd}")
+                return cmd
+        except Exception as e:
+            print(f"Failed with command {cmd}: {e}")
+            continue
+    return None
+
+
+## transport agent
 async def transport_mcp_agent(message: str, people: int = 1):
     response_text = None
     agent = None
     
     try:
-        print("Initializing MCPTools for Transport Agent...")
-        mcp_tools = MCPTools("npx -y @modelcontextprotocol/server-google-maps")
-        print("MCPTools initialized for Transport Agent.")
+        # testing MCP connection
+        working_cmd = await test_mcp_connection()
+        if not working_cmd:
+            print("No working MCP command found, using fallback agent without MCP tools")
+            return await transport_fallback_agent(message, people)
+        
+        print(f"Using MCP command: {working_cmd}")
+        mcp_tools = MCPTools(working_cmd)
         
         async with mcp_tools:
             print("MCPTools context entered successfully")
             
             if not OPENAI_API_KEY:
-                raise ValueError("OPENAI_API_KEY not found in environment variables")
+                raise ValueError("GROQ_API_KEY not found in environment variables")
             
             agent = Agent(
-                model=Groq(id="llama-3.3-70b-versatile", api_key=GROQ_API_KEY),
+                model=OpenAIChat(id="gpt-4o-mini", api_key=OPENAI_API_KEY),
                 instructions=dedent(f"""\
                     You are a travel agent. Your task is to find the best transport options for {people} number of people.\
                     You will find the time and cost of traveling from one location to another - for each of the following modes:\
@@ -73,13 +121,7 @@ async def transport_mcp_agent(message: str, people: int = 1):
             )
             print("Transport Agent initialized!")
         
-            # Get response without streaming for easier text extraction
             response_stream = await agent.arun(message, stream=False)
-            
-            # Print the response for debugging
-            await apprint_run_response(response_stream, markdown=True)
-            
-            # Extract the actual text content
             response_text = extract_text_from_response(response_stream)
         
         print("MCPTools context exited.")
@@ -88,10 +130,13 @@ async def transport_mcp_agent(message: str, people: int = 1):
         print(f"Error occurred in transport_mcp_agent: {e}")
         print(f"Error type: {type(e)}")
         traceback.print_exc()
-        response_text = None
+        
+        # fallback to agent without MCP tools
+        print("Falling back to agent without MCP tools")
+        response_text = await transport_fallback_agent(message, people)
     
     finally:
-        # Clean up agent if it exists
+        # cleaning up agent if it still exists
         if agent and hasattr(agent, 'close') and callable(agent.close):
             try:
                 if asyncio.iscoroutinefunction(agent.close):
@@ -104,25 +149,75 @@ async def transport_mcp_agent(message: str, people: int = 1):
     
     return response_text
 
-## Hotel Booking Agent
+## fallback transport agent
+async def transport_fallback_agent(message: str, people: int = 1):
+    """
+    Fallback transport agent without MCP tools
+    """
+    try:
+        if not GROQ_API_KEY:
+            raise ValueError("GROQ_API_KEY not found in environment variables")
+        
+        agent = Agent(
+            model=Groq(id="llama-3.3-70b-versatile", api_key=GROQ_API_KEY),
+            instructions=dedent(f"""\
+                You are a travel agent. Your task is to find the best transport options for {people} number of people.\
+                    You will find the time and cost of traveling from one location to another - for each of the following modes:\
+                    - Car\
+                    - Train\
+                    - Flight\
+                    You will use the Google Maps API to find the best transport options.\
+                    You will return the response in JSON format.\
+                    You will not return any unnecessary text.
+                """
+            ),
+            markdown=True,
+        )
+        
+        response_stream = await agent.arun(message, stream=False)
+        response_text = extract_text_from_response(response_stream)
+        
+        if hasattr(agent, 'close') and callable(agent.close):
+            try:
+                if asyncio.iscoroutinefunction(agent.close):
+                    await agent.close()
+                else:
+                    agent.close()
+            except Exception as e:
+                print(f"Error closing fallback agent: {e}")
+        
+        return response_text
+        
+    except Exception as e:
+        print(f"Error in fallback transport agent: {e}")
+        return None
+
+
+## hotel booking agent
 async def hotel_booking_mcp_agent(message: str, place: str, people: int = 1):
     response_text = None
     try:
-        async with MultiMCPTools(
-            [
-                "npx -y @modelcontextprotocol/server-google-maps"
-            ]
-        ) as mcptools:
+        working_cmd = await test_mcp_connection()
+        if not working_cmd:
+            print("No working MCP command found, using fallback agent without MCP tools")
+            return await hotel_booking_fallback_agent(message, place, people)
+        
+        async with MultiMCPTools([working_cmd]) as mcptools:
             
             print("MCPTools initializing for Hotel Booking Agent...")
             agent = Agent(
                 model=OpenAIChat(id="gpt-4o-mini", api_key=OPENAI_API_KEY),
                 instructions=dedent(f"""\
-                    You are a hotel booking assistant. Your task is to find the best hotel options for the user at {place} for {people} number of people.\
-                    You will find the cheapest offers which meets the requirements of the user:\
-                    You will use the Google Maps API and Airbnb API to find the best shelter options.\
-                    You will return the response in text format.\
-                    You will not return any unnecessary text.
+                    You are a hotel booking assistant. Your task is to suggest the best hotel options for {people} people at {place}.\
+                    
+                    Provide realistic hotel recommendations including:\
+                    - Budget hotels (1000rs-2000rs per night)\
+                    - Mid-range hotels (3000rs-6000rs per night)\
+                    - Luxury hotels (10000rs per night)\
+                    
+                    For each category, mention typical amenities and approximate prices.\
+                    Be specific about the location: {place}\
+                    Return the response in clear text format.
                     """
                 ),
                 tools=[mcptools],
@@ -152,15 +247,63 @@ async def hotel_booking_mcp_agent(message: str, place: str, people: int = 1):
     
     except Exception as e:
         print(f"Error occurred in hotel_booking_agent: {e}")
+        response_text = await hotel_booking_fallback_agent(message, place, people)
         
     return response_text
 
+## fallback hotel booking agent
+async def hotel_booking_fallback_agent(message: str, place: str, people: int = 1):
+    """
+    Fallback hotel booking agent without MCP tools
+    """
+    try:
+        agent = Agent(
+            model=Groq(id="llama-3.3-70b-versatile", api_key=GROQ_API_KEY),
+            instructions=dedent(f"""\
+                You are a hotel booking assistant. Your task is to suggest the best hotel options for {people} people at {place}.\
+                    
+                Provide realistic hotel recommendations including:\
+                - Budget hotels (1000rs-2000rs per night)\
+                - Mid-range hotels (3000rs-6000rs per night)\
+                - Luxury hotels (10000rs per night)\
+                
+                For each category, mention typical amenities and approximate prices.\
+                Be specific about the location: {place}\
+                Return the response in clear text format.
+                """
+            ),
+            markdown=True,
+        )
+        
+        response_stream = await agent.arun(message, stream=False)
+        response_text = extract_text_from_response(response_stream)
+        
+        if hasattr(agent, 'close') and callable(agent.close):
+            try:
+                if asyncio.iscoroutinefunction(agent.close):
+                    await agent.close()
+                else:
+                    agent.close()
+            except Exception as e:
+                print(f"Error closing fallback agent: {e}")
+        
+        return response_text
+        
+    except Exception as e:
+        print(f"Error in fallback hotel booking agent: {e}")
+        return None
 
-## Sightseeing Agent
+
+## sightseeing agent
 async def sightseeing_mcp_agent(message: str, place: str, people: int = 1):
     response_text = None
     try:
-        async with MCPTools("npx -y @modelcontextprotocol/server-google-maps") as mcptools:
+        working_cmd = await test_mcp_connection()
+        if not working_cmd:
+            print("No working MCP command found, using fallback agent without MCP tools")
+            return await sightseeing_fallback_agent(message, place, people)
+        
+        async with MCPTools(working_cmd) as mcptools:
             
             print("MCPTools initializing for Sightseeing Agent...")
             agent = Agent(
@@ -200,25 +343,81 @@ async def sightseeing_mcp_agent(message: str, place: str, people: int = 1):
     
     except Exception as e:
         print(f"Error occurred in sightseeing_agent: {e}")
+        response_text = await sightseeing_fallback_agent(message, place, people)
         
     return response_text
 
+## fallback sightseeing agent
+async def sightseeing_fallback_agent(message: str, place: str, people: int = 1):
+    """
+    Fallback sightseeing agent without MCP tools
+    """
+    try:
+        agent = Agent(
+            model=Groq(id="llama-3.3-70b-versatile", api_key=GROQ_API_KEY),
+            instructions=dedent(f"""\
+                You are a local tour guide for {place}. Your task is to recommend the best sightseeing locations.\
+                There are {people} people in the group.\
+                
+                Provide specific recommendations including:\
+                - Top 4-5 must-visit attractions\
+                - Brief description of each place\
+                - Approximate visit duration\
+                - Entry fees (if any)\
+                - Best time to visit\
+                
+                Focus on attractions within and close to {place}.\
+                Return the response in clear text format.
+                """
+            ),
+            markdown=True,
+        )
+        
+        response_stream = await agent.arun(message, stream=False)
+        response_text = extract_text_from_response(response_stream)
+        
+        if hasattr(agent, 'close') and callable(agent.close):
+            try:
+                if asyncio.iscoroutinefunction(agent.close):
+                    await agent.close()
+                else:
+                    agent.close()
+            except Exception as e:
+                print(f"Error closing fallback agent: {e}")
+        
+        return response_text
+        
+    except Exception as e:
+        print(f"Error in fallback sightseeing agent: {e}")
+        return None
 
-## Location Agent
-async def location_mcp_agent(message: str, place: str, days_left: int):
+
+## location agent
+async def location_mcp_agent(message: str, place: str, days_left: int, tourist_destination: str, places_visited: list):
     response_text = None
     try:
-        async with MCPTools("npx -y @modelcontextprotocol/server-google-maps") as mcptools:
+        working_cmd = await test_mcp_connection()
+        if not working_cmd:
+            print("No working MCP command found, using fallback agent without MCP tools")
+            return await location_fallback_agent(message, place, days_left)
+        
+        async with MCPTools(working_cmd) as mcptools:
             
             print("MCPTools initializing for Location Agent...")
             agent = Agent(
                 model=OpenAIChat(id="gpt-4o-mini", api_key=OPENAI_API_KEY),
                 instructions=dedent(f"""\
-                    You are a travel agent. The tourists have {days_left} days left.\
-                    You will find the next most popular location for the user to go to from {place}.\
-                    You will use the Google Maps API to find the best location.\
-                    You will return the response in text format.\
-                    You will not return any unnecessary text.
+                    You are a travel agent. The tourists have {days_left} days left in their trip.\
+                    Starting from {place}, recommend the next best tourist destination they should visit.\
+                    Keep in mind the next place must be within {tourist_destination} and cannot repeat any places already visited: {places_visited}.\
+                        
+                    Consider:\
+                    - Distance from {place} (not too far for the remaining days)\
+                    - Popular tourist attractions\
+                    - Accommodation availability\
+                    - Transportation connectivity\
+                    
+                    Return ONLY the name of the recommended destination, nothing else.\
                     """
                 ),
                 tools=[mcptools],
@@ -230,7 +429,7 @@ async def location_mcp_agent(message: str, place: str, days_left: int):
                 response_stream = await agent.arun(message, stream=False)
                 await apprint_run_response(response_stream, markdown=True)
                 
-                # Extract the actual text content
+                # extracting the actual text content
                 response_text = extract_text_from_response(response_stream)
                 
             finally:
@@ -248,16 +447,59 @@ async def location_mcp_agent(message: str, place: str, days_left: int):
     
     except Exception as e:
         print(f"Error occurred in location_agent: {e}")
+        response_text = await location_fallback_agent(message, place, days_left, tourist_destination)
         
     return response_text
 
+## fallback location agent
+async def location_fallback_agent(message: str, place: str, days_left: int, tourist_destination: str, places_visited: list):
+    """
+    Fallback location agent without MCP tools
+    """
+    try:
+        agent = Agent(
+            model=Groq(id="llama-3.3-70b-versatile", api_key=GROQ_API_KEY),
+            instructions=dedent(f"""\
+                You are a travel agent. The tourists have {days_left} days left in their trip.\
+                Starting from {place}, recommend the next best tourist destination they should visit.\
+                Keep in mind the next place must be within {tourist_destination} and cannot repeat any places already visited: {places_visited}.\
+                    
+                Consider:\
+                - Distance from {place} (not too far for the remaining days)\
+                - Popular tourist attractions\
+                - Accommodation availability\
+                - Transportation connectivity\
+                
+                Return ONLY the name of the recommended destination, nothing else.\
+                """
+            ),
+            markdown=True,
+        )
+        
+        response_stream = await agent.arun(message, stream=False)
+        response_text = extract_text_from_response(response_stream)
+        
+        if hasattr(agent, 'close') and callable(agent.close):
+            try:
+                if asyncio.iscoroutinefunction(agent.close):
+                    await agent.close()
+                else:
+                    agent.close()
+            except Exception as e:
+                print(f"Error closing fallback agent: {e}")
+        
+        return response_text
+        
+    except Exception as e:
+        print(f"Error in fallback location agent: {e}")
+        return None
 
-# Test function to demonstrate usage
+# function to demonstrate usage
 async def test_agents():
     """
     Test function to show how all agents work and return text
     """
-    print("=== Testing Transport Agent ===")
+    print("Testing Transport Agent")
     transport_result = await transport_mcp_agent(
         "Find me the price of traveling from Kolkata to Sikkim using car, train, flight. Please return in json format.",
         people=2
@@ -265,7 +507,7 @@ async def test_agents():
     print(f"Transport Result Type: {type(transport_result)}")
     print(f"Transport Result: {transport_result}")
     
-    print("\n=== Testing Hotel Booking Agent ===")
+    print("Testing Hotel Booking Agent")
     hotel_result = await hotel_booking_mcp_agent(
         "Find me affordable hotels in Sikkim for 2 people for 3 nights",
         place="Sikkim",
@@ -274,7 +516,7 @@ async def test_agents():
     print(f"Hotel Result Type: {type(hotel_result)}")
     print(f"Hotel Result: {hotel_result}")
     
-    print("\n=== Testing Sightseeing Agent ===")
+    print("Testing Sightseeing Agent")
     sightseeing_result = await sightseeing_mcp_agent(
         "What are the top 5 sightseeing places in Sikkim?",
         place="Sikkim",
@@ -283,7 +525,7 @@ async def test_agents():
     print(f"Sightseeing Result Type: {type(sightseeing_result)}")
     print(f"Sightseeing Result: {sightseeing_result}")
     
-    print("\n=== Testing Location Agent ===")
+    print("Testing Location Agent")
     location_result = await location_mcp_agent(
         "What's the next best place to visit from Sikkim for a 7-day trip?",
         place="Sikkim",
@@ -295,3 +537,4 @@ async def test_agents():
 
 if __name__ == "__main__":
     print("Starting main execution...")
+    asyncio.run(test_agents())
