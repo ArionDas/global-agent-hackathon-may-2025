@@ -15,7 +15,7 @@ It is an autonomous travel planning application that leverages multiple speciali
 We wanted to create a lightweight application that users can use to get a personalized itinerary for their travel. The application aims to create a robust collaborative environment where multiple agents (with specific purposes) work towards the aim of generating the detailed itinerary. We have deliberately not included any high end tools or applications to reduce latency and response time.
 
 ### Demo Video
-
+[Link](https://youtu.be/tsAbE_UCB9I)
 
 ## System Architecture
 
@@ -61,6 +61,18 @@ We wanted to create a lightweight application that users can use to get a person
 - **Model Context Protocol (MCP)**: External API integration
 - **Google Maps API**: Location data, transportation and accomodation information
 - **Streamlit**: Web application interface
+
+<p align="center">
+<img src="https://github.com/user-attachments/assets/f647a00b-36c7-4476-8f05-5d40561f3ad7"/>
+</p>
+
+<p align="center">
+<img src="https://github.com/user-attachments/assets/a4b1675f-8690-4e28-bac8-08bd77416448"/>
+</p>
+
+<p align="center">
+<img src="https://github.com/user-attachments/assets/0852b791-d233-4754-8009-b14f9e126d99"/>
+</p>
 
 ### Architecture Pattern
 ```
