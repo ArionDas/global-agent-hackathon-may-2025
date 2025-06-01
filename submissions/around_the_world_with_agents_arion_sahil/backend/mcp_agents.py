@@ -55,8 +55,8 @@ def get_mcp_command():
     if platform.system() == "Windows":
         # trying different approaches for Windows - credits Claude 4
         commands_to_try = [
-            "npx.cmd -y @modelcontextprotocol/server-google-maps",
             "npx -y @modelcontextprotocol/server-google-maps",
+            "npx.cmd -y @modelcontextprotocol/server-google-maps",
             "node_modules/.bin/npx -y @modelcontextprotocol/server-google-maps"
         ]
     else:
@@ -101,17 +101,19 @@ async def transport_mcp_agent(message: str, people: int = 1):
             print("MCPTools context entered successfully")
             
             if not OPENAI_API_KEY:
-                raise ValueError("GROQ_API_KEY not found in environment variables")
+                raise ValueError("OPENAI_API_KEY not found in environment variables")
             
             agent = Agent(
                 model=OpenAIChat(id="gpt-4o-mini", api_key=OPENAI_API_KEY),
                 instructions=dedent(f"""\
                     You are a travel agent. Your task is to find the best transport options for {people} number of people.\
-                    You will find the time and cost of traveling from one location to another - for each of the following modes:\
+                    You will find the exact time and cost of traveling (convert to USD) - for each of the following modes:\
+                    You must provide the exact correct time and cost of these routes. You must not return any incorrect responses.\
                     - Car\
-                    - Train\
-                    - Flight\
+                    - Train (you must mention railway station name)\
+                    - Flight (you must mention airport name)\
                     You will use the Google Maps API to find the best transport options.\
+                    You must scan all the nearby airports, railway stations and must return a valid transport option.\
                     You will return the response in JSON format.\
                     You will not return any unnecessary text.
                     """
@@ -120,32 +122,29 @@ async def transport_mcp_agent(message: str, people: int = 1):
                 markdown=True,
             )
             print("Transport Agent initialized!")
-        
-            response_stream = await agent.arun(message, stream=False)
-            response_text = extract_text_from_response(response_stream)
+
+            try:
+                response_stream = await agent.arun(message, stream=False)
+                await apprint_run_response(response_stream, markdown=True)
+                response_text = extract_text_from_response(response_stream)
+                
+            finally:
+                if hasattr(agent, 'close') and callable(agent.close):
+                    try:
+                        if asyncio.iscoroutinefunction(agent.close):
+                            await agent.close()
+                        else:
+                            agent.close()
+                        print("Agent closed successfully")
+                    except Exception as e:
+                        print(f"Error closing agent: {e}")
         
         print("MCPTools context exited.")
 
     except Exception as e:
-        print(f"Error occurred in transport_mcp_agent: {e}")
-        print(f"Error type: {type(e)}")
-        traceback.print_exc()
-        
         # fallback to agent without MCP tools
         print("Falling back to agent without MCP tools")
         response_text = await transport_fallback_agent(message, people)
-    
-    finally:
-        # cleaning up agent if it still exists
-        if agent and hasattr(agent, 'close') and callable(agent.close):
-            try:
-                if asyncio.iscoroutinefunction(agent.close):
-                    await agent.close()
-                else:
-                    agent.close()
-                print("Agent closed successfully")
-            except Exception as e:
-                print(f"Error closing agent: {e}")
     
     return response_text
 
@@ -162,13 +161,15 @@ async def transport_fallback_agent(message: str, people: int = 1):
             model=Groq(id="llama-3.3-70b-versatile", api_key=GROQ_API_KEY),
             instructions=dedent(f"""\
                 You are a travel agent. Your task is to find the best transport options for {people} number of people.\
-                    You will find the time and cost of traveling from one location to another - for each of the following modes:\
-                    - Car\
-                    - Train\
-                    - Flight\
-                    You will use the Google Maps API to find the best transport options.\
-                    You will return the response in JSON format.\
-                    You will not return any unnecessary text.
+                You will find the exact time and cost of traveling (convert to USD) - for each of the following modes:\
+                You must provide the exact correct time and cost of these routes. You must not return any incorrect responses.\
+                - Car\
+                - Train (you must mention railway station name)\
+                - Flight (you must mention airport name)\
+                You will use the Google Maps API to find the best transport options.\
+                You must scan all the nearby airports, railway stations and must return a valid transport option.\
+                You will return the response in JSON format.\
+                You will not return any unnecessary text.
                 """
             ),
             markdown=True,
@@ -176,6 +177,7 @@ async def transport_fallback_agent(message: str, people: int = 1):
         
         response_stream = await agent.arun(message, stream=False)
         response_text = extract_text_from_response(response_stream)
+        
         
         if hasattr(agent, 'close') and callable(agent.close):
             try:
@@ -211,11 +213,11 @@ async def hotel_booking_mcp_agent(message: str, place: str, people: int = 1):
                     You are a hotel booking assistant. Your task is to suggest the best hotel options for {people} people at {place}.\
                     
                     Provide realistic hotel recommendations including:\
-                    - Budget hotels (1000rs-2000rs per night)\
-                    - Mid-range hotels (3000rs-6000rs per night)\
-                    - Luxury hotels (10000rs per night)\
+                    - Budget hotels (100$ - 300$ per night)\
+                    - Mid-range hotels (500$-1000$ per night)\
+                    - Luxury hotels (1500$+ per night)\
                     
-                    For each category, mention typical amenities and approximate prices.\
+                    For each category, mention typical amenities and approximate prices (convert to INR).\
                     Be specific about the location: {place}\
                     Return the response in clear text format.
                     """
@@ -263,11 +265,11 @@ async def hotel_booking_fallback_agent(message: str, place: str, people: int = 1
                 You are a hotel booking assistant. Your task is to suggest the best hotel options for {people} people at {place}.\
                     
                 Provide realistic hotel recommendations including:\
-                - Budget hotels (1000rs-2000rs per night)\
-                - Mid-range hotels (3000rs-6000rs per night)\
-                - Luxury hotels (10000rs per night)\
+                - Budget hotels (100$ - 300$ per night)\
+                - Mid-range hotels (500$-1000$ per night)\
+                - Luxury hotels (1500$+ per night)\
                 
-                For each category, mention typical amenities and approximate prices.\
+                For each category, mention typical amenities and approximate prices (convert to INR).\
                 Be specific about the location: {place}\
                 Return the response in clear text format.
                 """
@@ -309,12 +311,19 @@ async def sightseeing_mcp_agent(message: str, place: str, people: int = 1):
             agent = Agent(
                 model=OpenAIChat(id="gpt-4o-mini", api_key=OPENAI_API_KEY),
                 instructions=dedent(f"""\
-                    You are a local tour guide. Your task is to find the best sightseeing locations in and around {place}.\
-                    There are {people} number of people. Don't come up with places too far.\
-                    You will use the Google Maps API to find the best sightseeing options.\
-                    You will return the response in text format.\
-                    You will not return any unnecessary text.
-                    """
+                You are a local tour guide for {place}. Your task is to recommend the best sightseeing locations.\
+                There are {people} people in the group.\
+                
+                Provide specific recommendations including:\
+                - Top 4-5 must-visit attractions\
+                - Brief description of each place\
+                - Approximate visit duration\
+                - Entry fees (if any, in USD)\
+                - Best time to visit\
+                
+                Focus on attractions within and close to {place}.\
+                Return the response in clear text format.
+                """
                 ),
                 tools=[mcptools],
                 markdown=True,

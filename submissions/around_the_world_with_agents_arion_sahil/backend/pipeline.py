@@ -55,9 +55,9 @@ async def multi_agent_collaboration(start_location: str, tourist_destination: st
         
         ## transport agent
         try:
-            print(f"🚗 Getting transport options from {start} to {end}...")
+            print(f"Getting transport options from {start} to {end}...")
             transport = await transport_mcp_agent(
-                message = f"Find me the price of traveling from {start} to {end} using car, train, flight for {number_of_people} people. Please return in json format, no unnecessary text to be returned.",
+                message = f"Find me the price (convert to USD) of traveling from {start} to {end} using car, train, flight for {number_of_people} people. Please return in json format, no unnecessary text to be returned.",
                 people = number_of_people,
             )
             
@@ -100,7 +100,7 @@ async def multi_agent_collaboration(start_location: str, tourist_destination: st
         try:
             print(f"Getting hotel options for {end}...")
             hotel = await hotel_booking_mcp_agent(
-                message = f"Find me the best hotel in {end} for {number_of_people} people. Be very specific and give me the best options with prices.",
+                message = f"Find me the best hotel in {end} for {number_of_people} people. Be very specific and give me the best options with prices (convert to USD).",
                 place = end,
                 people = number_of_people,
             )
@@ -122,7 +122,7 @@ async def multi_agent_collaboration(start_location: str, tourist_destination: st
         next_destination = None
         if total_days > 1:  # only if we have more days left
             try:
-                print(f"📍 Finding next destination from {end}...")
+                print(f"Finding next destination from {end}...")
                 next_destination = await location_mcp_agent(
                     message = f"Find me the nearest most popular tourist destination from {end} where tourists can spend the night. Consider that they have {total_days-1} days left.",
                     place = end,
@@ -136,10 +136,10 @@ async def multi_agent_collaboration(start_location: str, tourist_destination: st
                 if next_destination and next_destination.strip():
                     # stripping the response
                     next_destination = next_destination.strip().split('\n')[0].strip()
-                    print(f"✅ Next destination: {next_destination}")
+                    print(f"Next destination: {next_destination}")
                 else:
                     next_destination = end_location  # default to end location
-                    print(f"⚠️ Location agent returned empty result, using end location as fallback")
+                    print(f"Location agent returned empty result, using end location as fallback")
                     day_success = False
                     
             except Exception as e:
@@ -168,7 +168,7 @@ async def multi_agent_collaboration(start_location: str, tourist_destination: st
             consecutive_failures = 0
         else:
             consecutive_failures += 1
-            print(f"⚠️ Day {day} had issues. Consecutive failures: {consecutive_failures}")
+            print(f"Day {day} had issues. Consecutive failures: {consecutive_failures}")
         
         # updating locations for next iteration
         start = end
@@ -176,7 +176,7 @@ async def multi_agent_collaboration(start_location: str, tourist_destination: st
         
         total_days -= 1
         
-        print(f"📊 Day {day} completed. Days remaining: {total_days}")
+        print(f"Day {day} completed. Days remaining: {total_days}")
         
         await asyncio.sleep(1)
     
@@ -184,7 +184,7 @@ async def multi_agent_collaboration(start_location: str, tourist_destination: st
         error_msg = f"\nNOTICE: Trip planning encountered repeated issues after Day {day}. Some information may be incomplete or based on fallback responses.\n"
         total_prompt = error_msg + total_prompt
     
-    print(f"\n🎉 Trip planning completed! Generated itinerary for {original_total_days} days.")
+    print(f"\nTrip planning completed! Generated itinerary for {original_total_days} days.")
     return total_prompt
 
 
@@ -213,7 +213,7 @@ if __name__ == "__main__":
     
     st.set_page_config(layout='wide', page_title="Around the World with Agents")
     st.title("Around the World with Agents")
-    st.write("This is a collaborative multi-agent application for travel itinerary planning using AI agents.")
+    st.write("This is a collaborative multi-agent application for travel itinerary planning.")
     
     with st.sidebar:
         st.header("API Configuration")
@@ -227,16 +227,16 @@ if __name__ == "__main__":
     with st.sidebar:
         st.header("Trip Details")
         start_location = st.text_input("Start Location")
-        tourist_destination = st.text_input("Tourist Destination")
+        tourist_destination = st.text_input("Tourist Destination(s)")
         end_location = st.text_input("End Location")
-        budget = st.number_input("Budget (in INR)")
+        budget = st.number_input("Budget (in USD)")
         total_days = st.number_input("Total Days")
         number_of_people = st.number_input("Number of People")
         if not start_location or not tourist_destination or not end_location or not budget or not total_days or not number_of_people:
             st.error("Please fill in all location fields.")
     
     if st.button("Generate Itinerary"):
-        with st.spinner(f"Collecting all information... Might take a few seconds..."):
+        with st.spinner(f"Collecting all information... Might take a few minutes..."):
             total_prompt = run_multi_agent_collaboration(
                 start_location,
                 tourist_destination,
@@ -257,7 +257,7 @@ if __name__ == "__main__":
                 Start Location: {start_location}
                 Tourist Destination: {tourist_destination}
                 End Location: {end_location}
-                Budget: {budget} rs
+                Budget: {budget} $
                 Total Days: {total_days}
                 Number of People: {number_of_people}
                 
@@ -272,12 +272,14 @@ if __name__ == "__main__":
                 - Sightseeing options
                 - Any other relevant information
                 
-                Use more expensive options if they are within the budget, but avoid them if not.
+                You must not make any logical errors or assumptions.
+                Any calculation involving money must be accurate and precise.
                 Finally, let them know the final cost of the trip and how much they have saved. 
                 If the budget is not enough, let them know that too.
                 
                 Make sure to include all the information in the itinerary.
-                
+                Please maintain a uniform font size and style throughout the itinerary and use bullet points for clarity. Maintain headings and subheadings for different sections.
+                Please don't make the itinerary look dirty or messy. Make sure you use proper formatting and structure.
                 Please generate a detailed travel itinerary based on the following information:
                 
                 """ + total_prompt
